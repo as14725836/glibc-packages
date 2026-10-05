@@ -1,105 +1,104 @@
-/* - Fix for Termux
-   If you run mprotect with the PROT_EXEC flag,
-   then the error "Permission denied" is displayed.
-
-   Cause: https://github.com/termux/proot/commit/89bfa991cb3cb7fc78099d06d0f7e7c840cb62d1
-   Issue: https://github.com/termux-pacman/glibc-packages/issues/49
-   Solution: https://stackoverflow.com/questions/59303617/c-mprotect-for-read-write-and-execute
-*/
+/* mprotect() workaround for Termux/Android.
+ *
+ * If mprotect() is called with PROT_EXEC on an existing mapping, Android
+ * (SELinux execmem policy, and proot) returns EACCES/EPERM.
+ *
+ * Cause: https://github.com/termux/proot/commit/89bfa991cb3cb7fc78099d06d0f7e7c840cb62d1
+ * Issue: https://github.com/termux-pacman/glibc-packages/issues/49
+ *
+ * This is a rewrite of the previous workaround, which was unsafe:
+ *
+ * - it used strlen() on the address argument (an address is not a string),
+ * so the number of bytes copied back was undefined;
+ * - it called malloc()/calloc()/free() and read /proc/self/maps from inside
+ * mprotect(). mprotect() is itself called from malloc() (arena trimming)
+ * and from pthread_create(), so that was a re-entrant call into the
+ * allocator and could corrupt the heap ("malloc(): invalid next size").
+ * This is what made byte-emulating runtimes that JIT code (Wine, FEX,
+ * box64, ChakraCore, ...) die randomly during startup;
+ * - it re-created the range with MAP_FIXED, discarding its content, and then
+ * copied back only that bogus strlen() amount of bytes.
+ *
+ * This version uses the caller-provided length, allocates the scratch buffer
+ * with mmap() (never malloc()) and always restores the whole range.
+ *
+ * GLIBC_MPROTECT_NO_WORKAROUND=1 disables the fallback (for debugging).
+ */
 
 #include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sysdep.h>
 #include <sys/syscall.h>
-#include <string.h>
-#include <fcntl.h>
-#include <stdio.h>
 
-#ifdef SHARED
-# include <not-cancel.h>
-# define GLOBAL_READ_SIZE 1024
+static int
+workaround_enabled (void)
+{
+  static int cached = -1;
+  const char *e;
 
-/* - String To Unsigned Long Int
-   There are two chairs - one is called "strtoul", the other "stuli"...
-*/
-static unsigned long int __stuli(char *value) {
-	unsigned long int val, res = 0;
-	int len = strlen(value);
-
-	for (int i=0; i<len; i++) {
-		val = value[len-1-i]-'0';
-		if (val == 0)
-			continue;
-		else if (val > 9)
-			val = value[len-1-i]-'W';
-		for (int j=0; j<i; j++)
-			val *= 16;
-		res += val;
-	}
-
-	return res;
+  if (cached < 0)
+    {
+      e = getenv ("GLIBC_MPROTECT_NO_WORKAROUND");
+      cached = (e != NULL && e[0] == 0x31) ? 0 : 1;
+    }
+  return cached;
 }
 
-static int __is_mmaped(void *addr) {
-	char buff[GLOBAL_READ_SIZE];
-	char *buff2 = NULL;
-	char *cont = NULL;
-	int res = 0;
-	int strlc, strlb;
-	memset(buff, 0, sizeof(buff));
-	int map = __open_nocancel("/proc/self/maps", O_RDONLY|O_CLOEXEC);
-	if (map >= 0) {
-		while (__read_nocancel(map, buff, GLOBAL_READ_SIZE) > 0) {
-			strlc = cont ? strlen(cont) : 0;
-			if (strlc > 0) {
-				free(buff2);
-				buff2 = malloc(sizeof(char)*strlc);
-				memcpy(buff2, cont, strlc);
-			}
-			free(cont);
-			cont = calloc(strlc+strlen(buff), sizeof(char));
-			strlb = buff2 ? strlen(buff2): 0;
-			if (strlb > 0)
-				memcpy(cont, buff2, strlb);
-			__strncat(cont, buff, GLOBAL_READ_SIZE);
-			memset(buff, 0, sizeof(buff));
-		}
-		char *saveptr;
-		while ((buff2 = strtok_r(cont, "\n", &cont)))
-			if (__stuli(strtok_r(buff2, "-", &saveptr)) == (unsigned long int)addr) {
-				res = 1;
-				break;
-		}
-	}
-	__close_nocancel_nostatus(map);
-	free(buff2);
-	free(cont);
-	return res;
-}
-#endif // SHARED
+int
+__mprotect (void *addr, size_t len, int prot)
+{
+  int res = INLINE_SYSCALL_CALL (mprotect, addr, len, prot);
 
-int __mprotect(void *addr, size_t len, int prot) {
-	int res = INLINE_SYSCALL_CALL(mprotect, addr, len, prot);
-#ifdef SHARED
-	if (res == -1 && errno == EACCES && prot & PROT_EXEC && !__is_mmaped(addr)) {
-		size_t saddr = strlen(addr)+1;
-		void *caddr;
-		int mmap_flags = MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED;
-		if (prot & PROT_GROWSDOWN)
-			mmap_flags |= MAP_GROWSDOWN;
-		if (saddr > 1) {
-			caddr = malloc(saddr);
-			memcpy(caddr, addr, saddr);
-		}
-		addr = mmap(addr, len, PROT_READ|PROT_WRITE|PROT_EXEC, mmap_flags, -1, 0);
-		if (saddr > 1) {
-			memcpy(addr, caddr, saddr);
-			free(caddr);
-		}
-		return INLINE_SYSCALL_CALL(mprotect, addr, len, prot);
-	}
-#endif // SHARED
-	return res;
+  if (res != -1)
+    return res;
+  if ((errno != EACCES && errno != EPERM) || (prot & PROT_EXEC) == 0)
+    return res;
+  if (!workaround_enabled ())
+    return res;
+
+  {
+    int saved_errno = errno;
+    int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+    void *scratch, *target;
+
+    if (prot & PROT_GROWSDOWN)
+      flags |= MAP_GROWSDOWN;
+
+    /* Scratch copy: mmap(), not malloc() -- mprotect() can be called from
+       inside the allocator, so it must not use the allocator itself.  */
+    scratch = mmap (NULL, len, PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (scratch == MAP_FAILED)
+      {
+        errno = saved_errno;
+        return res;
+      }
+
+    memcpy (scratch, addr, len);
+
+    target = mmap (addr, len, PROT_READ | PROT_WRITE | PROT_EXEC,
+                   flags, -1, 0);
+    if (target == MAP_FAILED)
+      {
+        munmap (scratch, len);
+        errno = saved_errno;
+        return res;
+      }
+
+    memcpy (target, scratch, len);
+    munmap (scratch, len);
+
+    res = INLINE_SYSCALL_CALL (mprotect, target, len, prot);
+    if (res == -1 && (errno == EACCES || errno == EPERM))
+      /* The range is already RWX/executable, Android only refuses to tighten
+         it.  The caller asked for executable memory and it is executable,
+         so report success.  */
+      res = 0;
+  }
+
+  return res;
 }
 
 libc_hidden_def(__mprotect)
