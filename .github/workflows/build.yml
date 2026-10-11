@@ -235,82 +235,47 @@ jobs:
 
   upload:
     permissions:
-      contents: read
+      contents: write # needed by softprops/action-gh-release to create a release
     if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [aarch64, arm, i686, x86_64]
-      fail-fast: false
     steps:
     - name: Clone repository
       uses: actions/checkout@v7
-    - name: Get *.pkg.* files
+    - name: Download all architecture artifacts
       uses: actions/download-artifact@v8.0.1
       with:
-        path: ./
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v6.2.1
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
-    - name: Import GPG key
+        path: ./artifacts
+    - name: Collect *.pkg.* files
       run: |
-        echo '${{ secrets.SF_GPG_BOT }}' > key.gpg
-        gpg --pinentry-mode=loopback --passphrase '${{ secrets.PW_GPG_BOT }}' --import key.gpg > /dev/null
-        rm key.gpg
-    - name: Get files from termux-packages repository
-      run: ./get-build-package.sh
-    - name: Uploading packages to aws
-      run: |
-        source ./scripts/utils/termux/package/termux_package.sh
-        get_name() {
-          local name="" file_sp=(${1//-/ })
-          for _index_f_get_name in $(seq 0 $((${#file_sp[*]}-4))); do
-            if [ -z $name ]; then
-              name="${file_sp[_index_f_get_name]}"
-            else
-              name+="-${file_sp[_index_f_get_name]}"
-            fi
-          done
-          echo "${name//+/0}"
-        }
-        sfuf() {
-          gpg --batch --pinentry-mode=loopback --passphrase '${{ secrets.PW_GPG_BOT }}' --detach-sign --use-agent -u '${{ secrets.KEY_GPG_BOT }}' --no-armor "$1"
-          for format_file in "" ".sig"; do
-            aws s3 cp "${1}${format_file}" s3://'${{ secrets.SFPU }}'/${repo}/${{ matrix.arch }}/"${1##*/}${format_file}"
-          done
-          rm "$1.sig"
-        }
-        tar xf "pkgs-${{ matrix.arch }}-${{ github.sha }}/pkgs-${{ matrix.arch }}-${{ github.sha }}.tar"
-        for repo in $(jq --raw-output 'del(.pkg_format) | .[].name' repo.json); do
-          dp_file="deleted_${repo}_packages.txt"
-          if [[ -f pkgs/$dp_file ]]; then
-            path_dp_file=pkgs/${{ github.sha }}_${dp_file}
-            {
-              for d_pkg in $(cat pkgs/${dp_file}); do
-                if ! termux_package__is_package_name_have_glibc_prefix "${d_pkg}"; then
-                  termux_package__add_prefix_glibc_to_package_name ${d_pkg}
-                else
-                  echo ${d_pkg}
-                fi
-              done
-            } > ${path_dp_file}
-            sfuf "${path_dp_file}"
+        mkdir -p release
+        # Each artifact unpacks to artifacts/<name>/<name>.tar (a tarball of pkgs/).
+        for arch in aarch64 arm i686 x86_64; do
+          tar_file="artifacts/pkgs-${arch}-${{ github.sha }}/pkgs-${arch}-${{ github.sha }}.tar"
+          if [ -f "$tar_file" ]; then
+            tar xf "$tar_file" -C release || true
           fi
-          for name_pkg in $(cat ./pkgs/built_${repo}_packages.txt); do
-            if ! termux_package__is_package_name_have_glibc_prefix "${name_pkg}"; then
-              name_pkg=$(termux_package__add_prefix_glibc_to_package_name $name_pkg)
-            fi
-            for list_pkg in pkgs/*.pkg.*; do
-              dir_pkg_sp=(${list_pkg//// })
-              for static in "" "-static"; do
-                if [[ $(echo "${name_pkg}${static}" | sed 's/+/0/g') = $(get_name ${dir_pkg_sp[-1]}) ]]; then
-                  sfuf "$list_pkg"
-                fi
-              done
-            done
-          done
         done
+        # Flatten: move every *.pkg.* up into release/ and drop the empty pkgs dir.
+        find release -type f -name '*.pkg.*' -exec mv -t release {} +
+        find release -mindepth 1 -type d -empty -delete
+        rm -f release/.placeholder
+        ls -la release/
+    - name: Publish packages to GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: packages-${{ github.run_id }}
+        name: Packages ${{ github.run_id }}
+        body: |
+          Automatically built packages from run ${{ github.run_id }}.
+
+          Commit: ${{ github.sha }}
+          Triggered by: ${{ github.event_name }}
+
+          Install with pacman (termux glibc):
+          ```
+          pacman -U <package>.pkg.tar.xz
+          ```
+        files: release/*.pkg.*
+        draft: false
+        prerelease: false
