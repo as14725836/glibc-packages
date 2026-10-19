@@ -17,6 +17,10 @@ TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 "
 
 termux_step_pre_configure() {
+	# x264 assembles its NEON sources with $(AS). The CGCT environment points
+	# AS at the bare GNU assembler, which does not understand the -D/-I flags
+	# x264 passes to it, so use the compiler driver like clang builds do.
+	export AS="$CC"
 	# x264 requires nasm for its x86 assembly, which the glibc repositories
 	# do not ship. aarch64/arm NEON code is written in gas and works fine.
 	if [ "$TERMUX_ARCH" = "i686" ] || [ "$TERMUX_ARCH" = "x86_64" ]; then
