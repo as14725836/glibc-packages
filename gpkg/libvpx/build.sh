@@ -12,8 +12,8 @@ termux_step_configure() {
 	case "$TERMUX_ARCH" in
 		"aarch64") _CONFIGURE_TARGET=("--force-target=arm64-linux-gcc");;
 		"arm") _CONFIGURE_TARGET=("--target=armv7-linux-gcc" "--disable-neon-asm");;
-		"i686") _CONFIGURE_TARGET=("--target=x86-linux-gcc" "--disable-asm");;
-		"x86_64") _CONFIGURE_TARGET=("--target=x86_64-linux-gcc" "--disable-asm");;
+		"i686") _CONFIGURE_TARGET=("--target=x86-linux-gcc" "--disable-x86-asm");;
+		"x86_64") _CONFIGURE_TARGET=("--target=x86_64-linux-gcc" "--disable-x86-asm");;
 		*) termux_error_exit "Unsupported arch: $TERMUX_ARCH";;
 	esac
 	# Assembler is disabled on x86 because the glibc repositories do not ship
