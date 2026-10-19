@@ -67,7 +67,7 @@ termux_step_make() {
 	cmake --build "$TERMUX_PKG_BUILDDIR"
 }
 termux_step_post_massage() {
-	local _GUARD_FILE="glibc/lib/${TERMUX_PKG_NAME}.so"
+	local _GUARD_FILE="glibc/lib/libx265.so"
 	if [ ! -e "${_GUARD_FILE}" ]; then
 		termux_error_exit "file ${_GUARD_FILE} not found."
 	fi
