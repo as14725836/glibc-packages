@@ -48,4 +48,3 @@ termux_step_post_massage() {
 		termux_error_exit "libvpx.so.${_SOVERSION} not found; please check if SOVERSION has changed."
 	fi
 }
-
