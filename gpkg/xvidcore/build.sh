@@ -11,6 +11,9 @@ termux_step_pre_configure() {
 	export TERMUX_PKG_BUILDDIR="$TERMUX_PKG_BUILDDIR/build/generic"
 	export TERMUX_PKG_SRCDIR="$TERMUX_PKG_BUILDDIR"
 
+	# xvidcore 1.3.7 ships "typedef int bool;", which is a hard error once the
+	# compiler defaults to C23. Pin the C dialect; nothing here needs C23.
+	export CFLAGS="$CFLAGS -std=gnu17"
 	# The i686 assembly uses text relocations, which the glibc loader rejects
 	# anyway. See https://www.xvid.org/
 	if [ "$TERMUX_ARCH" = "i686" ]; then
