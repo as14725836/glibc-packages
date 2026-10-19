@@ -3,6 +3,7 @@ TERMUX_PKG_DESCRIPTION="VP8 & VP9 Codec SDK"
 TERMUX_PKG_LICENSE="BSD 3-Clause"
 TERMUX_PKG_MAINTAINER="@termux-pacman"
 TERMUX_PKG_VERSION=1.17.0
+TERMUX_PKG_REVISION=1
 TERMUX_PKG_SRCURL="https://github.com/webmproject/libvpx/archive/refs/tags/v${TERMUX_PKG_VERSION}.tar.gz"
 TERMUX_PKG_SHA256=1020f184046187baa2985dbde38e0691f49c44088bca7a1842b0236c6081dc0a
 TERMUX_PKG_DEPENDS="gcc-libs-glibc"
@@ -18,6 +19,16 @@ termux_step_configure() {
 	esac
 	# Assembler is disabled on x86 because the glibc repositories do not ship
 	# nasm/yasm; aarch64/arm NEON code is .S and is handled by gcc.
+	#
+	# Only the VP8/VP9 decoders are built. The encoders (and the C++
+	# rate-control code they pull in via vp9/encoder/vp9_encodeframe.c) are
+	# not needed to decode VP8/VP9, which is all that is wanted here, and
+	# they are also what produced a broken symbol binding in the past: with
+	# the encoder enabled, logf() from vp9_encodeframe.c was emitted as
+	# "logf@GLIBCXX_3.4", a version that libstdc++.so.6 does not provide,
+	# so every consumer of libvpx.so failed to link with
+	# "undefined reference to `logf@GLIBCXX_3.4'" (for example ffmpeg's
+	# libvpx decoder probe). Keeping the encoders off avoids that entirely.
 	"$TERMUX_PKG_SRCDIR/configure" \
 		"${_CONFIGURE_TARGET[@]}" \
 		--prefix="$TERMUX_PREFIX" \
@@ -26,13 +37,12 @@ termux_step_configure() {
 		--disable-docs \
 		--disable-unit-tests \
 		--disable-realtime-only \
+		--disable-vp8-encoder \
+		--disable-vp9-encoder \
 		--enable-pic \
-		--enable-postproc \
 		--enable-vp8 \
 		--enable-vp9 \
 		--enable-vp9-highbitdepth \
-		--enable-vp9-temporal-denoising \
-		--enable-vp9-postproc \
 		--enable-shared \
 		--disable-static \
 		--enable-small \
