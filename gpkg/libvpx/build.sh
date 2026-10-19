@@ -3,7 +3,7 @@ TERMUX_PKG_DESCRIPTION="VP8 & VP9 Codec SDK"
 TERMUX_PKG_LICENSE="BSD 3-Clause"
 TERMUX_PKG_MAINTAINER="@termux-pacman"
 TERMUX_PKG_VERSION=1.17.0
-TERMUX_PKG_REVISION=1
+TERMUX_PKG_REVISION=2
 TERMUX_PKG_SRCURL="https://github.com/webmproject/libvpx/archive/refs/tags/v${TERMUX_PKG_VERSION}.tar.gz"
 TERMUX_PKG_SHA256=1020f184046187baa2985dbde38e0691f49c44088bca7a1842b0236c6081dc0a
 TERMUX_PKG_DEPENDS="gcc-libs-glibc"
@@ -20,15 +20,20 @@ termux_step_configure() {
 	# Assembler is disabled on x86 because the glibc repositories do not ship
 	# nasm/yasm; aarch64/arm NEON code is .S and is handled by gcc.
 	#
-	# Only the VP8/VP9 decoders are built. The encoders (and the C++
-	# rate-control code they pull in via vp9/encoder/vp9_encodeframe.c) are
-	# not needed to decode VP8/VP9, which is all that is wanted here, and
-	# they are also what produced a broken symbol binding in the past: with
-	# the encoder enabled, logf() from vp9_encodeframe.c was emitted as
-	# "logf@GLIBCXX_3.4", a version that libstdc++.so.6 does not provide,
-	# so every consumer of libvpx.so failed to link with
-	# "undefined reference to `logf@GLIBCXX_3.4'" (for example ffmpeg's
-	# libvpx decoder probe). Keeping the encoders off avoids that entirely.
+	# Only the VP8/VP9 decoders are built; the encoders are not needed here.
+	# Two things make this non-obvious:
+	#
+	# 1. --enable-vp8 / --enable-vp9 must NOT be used. Both map to
+	#    enable_codec(), which does enable_feature "<codec>_encoder"
+	#    "<codec>_decoder" and therefore force-enables the whole family,
+	#    silently overriding an earlier --disable-vp8-encoder. Use
+	#    --enable-vp8-decoder / --enable-vp9-decoder instead.
+	# 2. With the encoders on, vp9/ratectrl_rtc.cc ends up in libvpx.so and
+	#    logf() from it is emitted as "logf@GLIBCXX_3.4", a version that
+	#    libstdc++.so.6 does not define, so every consumer failed with
+	#    "undefined reference to `logf@GLIBCXX_3.4'" (this is what broke
+	#    ffmpeg's libvpx probe: "libvpx enabled but no supported decoders
+	#    found"). A decoder-only build links against libc only.
 	"$TERMUX_PKG_SRCDIR/configure" \
 		"${_CONFIGURE_TARGET[@]}" \
 		--prefix="$TERMUX_PREFIX" \
@@ -39,9 +44,9 @@ termux_step_configure() {
 		--disable-realtime-only \
 		--disable-vp8-encoder \
 		--disable-vp9-encoder \
+		--enable-vp8-decoder \
+		--enable-vp9-decoder \
 		--enable-pic \
-		--enable-vp8 \
-		--enable-vp9 \
 		--enable-vp9-highbitdepth \
 		--enable-shared \
 		--disable-static \
