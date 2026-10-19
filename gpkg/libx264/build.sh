@@ -27,7 +27,7 @@ termux_step_post_massage() {
 	# x264 has no stable soname guard upstream; keep an explicit check so a
 	# silent SOVERSION change does not slip into a release.
 	local _SOVERSION=164
-	if [ ! -e "lib/libx264.so.${_SOVERSION}" ]; then
+	if [ ! -e "glibc/lib/libx264.so.${_SOVERSION}" ]; then
 		termux_error_exit "libx264.so.${_SOVERSION} not found; please check if SOVERSION has changed."
 	fi
 }

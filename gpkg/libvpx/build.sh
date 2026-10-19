@@ -44,7 +44,7 @@ termux_step_post_massage() {
 	# Do not forget to bump revision of reverse dependencies and rebuild them
 	# after SOVERSION is changed.
 	local _SOVERSION=12
-	if [ ! -e "lib/libvpx.so.${_SOVERSION}" ]; then
+	if [ ! -e "glibc/lib/libvpx.so.${_SOVERSION}" ]; then
 		termux_error_exit "libvpx.so.${_SOVERSION} not found; please check if SOVERSION has changed."
 	fi
 }
