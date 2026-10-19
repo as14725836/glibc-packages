@@ -1,16 +1,13 @@
 TERMUX_PKG_HOMEPAGE=https://ffmpeg.org
 TERMUX_PKG_DESCRIPTION="Tools and libraries to manipulate a wide range of multimedia formats and protocols"
-TERMUX_PKG_LICENSE="LGPL-2.1"
+TERMUX_PKG_LICENSE="GPL-2.0"
 TERMUX_PKG_MAINTAINER="@termux-pacman"
 TERMUX_PKG_VERSION=8.1.1
 TERMUX_PKG_SRCURL=https://www.ffmpeg.org/releases/ffmpeg-${TERMUX_PKG_VERSION}.tar.xz
 TERMUX_PKG_SHA256=b6863adde98898f42602017462871b5f6333e65aec803fdd7a6308639c52edf3
-# Deliberately minimal build, modelled on Proton-GE's ffmpeg recipe
-# (gloriouseggroll/proton-ge-custom, make/*.mk). The only consumer here is
-# Wine's winedmo (dlls/winedmo), which needs libavutil, libavformat and
-# libavcodec for demuxing and decoding only: no encoders, no filters and no
-# command line programs.
-TERMUX_PKG_DEPENDS="glibc, zlib-glibc, libbz2-glibc, liblzma-glibc, libgnutls-glibc, libdav1d-glibc"
+# --enable-gpl is required by libx264, libx265 and xvidcore; it changes the
+# license of this package from LGPL-2.1 to GPL-2.0.
+TERMUX_PKG_DEPENDS="glibc, zlib-glibc, libbz2-glibc, liblzma-glibc, libgnutls-glibc, libdav1d-glibc, libvpx-glibc, libwebp-glibc, libx264-glibc, libx265-glibc, libtheora-glibc, xvidcore-glibc, libass-glibc"
 
 termux_step_pre_configure() {
 	cd "$TERMUX_PKG_SRCDIR"
@@ -66,28 +63,28 @@ termux_step_configure() {
 		--ranlib="$RANLIB" \
 		--pkg-config="$PKG_CONFIG" \
 		--strip="$STRIP" \
+		--enable-gpl \
 		--disable-autodetect \
-		--disable-everything \
-		--disable-programs \
 		--disable-doc \
 		--disable-debug \
 		--disable-indevs \
 		--disable-outdevs \
-		--disable-filters \
-		--disable-encoders \
 		--disable-x86asm \
 		--disable-static \
 		--enable-shared \
-		--enable-demuxers \
-		--enable-decoders \
-		--enable-parsers \
-		--enable-bsfs \
 		--enable-protocol=https \
 		--enable-zlib \
 		--enable-bzlib \
 		--enable-lzma \
 		--enable-gnutls \
 		--enable-libdav1d \
+		--enable-libvpx \
+		--enable-libwebp \
+		--enable-libx264 \
+		--enable-libx265 \
+		--enable-libtheora \
+		--enable-libxvid \
+		--enable-libass \
 		--disable-decoder=vvc \
 		$_EXTRA_CONFIGURE_FLAGS
 }
